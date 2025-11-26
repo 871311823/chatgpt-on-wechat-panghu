@@ -2,7 +2,7 @@
 
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Callable
 
 from common.log import logger
@@ -207,8 +207,16 @@ class ReminderScheduler:
                     for todo, user in due:
                         try:
                             msg = f"⏰ 提醒：{todo.title}"
-                            if todo.remind_at:
-                                msg += f"\n时间：{todo.remind_at.strftime('%Y-%m-%d %H:%M')}"
+                            
+                            display_time = todo.remind_at or now
+                            # 对于重复提醒（remind_count>0），显示提醒时间 + 10 分钟 * 提醒次数
+                            if todo.remind_count and todo.remind_count > 0 and todo.remind_at:
+                                display_time = todo.remind_at + timedelta(minutes=10 * todo.remind_count)
+                            elif display_time < now:
+                                display_time = now
+                            
+                            if display_time:
+                                msg += f"\n时间：{display_time.strftime('%Y-%m-%d %H:%M')}"
                             msg += f"\n\n💡 快速完成：回复 #todo done {todo.id}"
                             self._send(user.wework_user_id, msg)
                             mark_reminded(todo.id)

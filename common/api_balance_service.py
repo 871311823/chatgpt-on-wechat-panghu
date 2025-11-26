@@ -167,6 +167,8 @@ class APIBalanceService:
             
             if nofx_result["success"]:
                 message += f"\n\n✅ NOFX交易系统已同步更新"
+                if nofx_result.get("affected_models", 0) > 0:
+                    message += f"\n🤖 已更新 {nofx_result['affected_models']} 个AI模型"
                 if nofx_result.get("affected_traders", 0) > 0:
                     message += f"\n📊 影响 {nofx_result['affected_traders']} 个交易员"
                     if nofx_result.get("running_traders", 0) > 0:
@@ -190,6 +192,7 @@ class APIBalanceService:
     def _sync_to_nofx_hot_update(self, api_key: str) -> Dict[str, Any]:
         """
         热更新NOFX交易系统的API KEY（不中断交易）
+        使用新的 /api/models/update-keys 接口
         """
         try:
             from common.nofx_api_service import get_nofx_service
@@ -204,42 +207,30 @@ class APIBalanceService:
                     "message": "NOFX服务未运行"
                 }
             
-            # 更新所有支持的交易所
-            # 根据你的配置，可能需要更新多个交易所
-            exchanges = ["binance", "okx", "hyperliquid", "aster"]
+            # 使用新的模型更新接口（统一更新所有模型）
+            logger.info("[APIBalance] Updating NOFX models via /api/models/update-keys")
+            result = nofx_service.update_models_keys(api_key)
             
-            updated_count = 0
-            total_affected = 0
-            total_running = 0
-            
-            for exchange_id in exchanges:
-                result = nofx_service.update_exchange_keys(
-                    exchange_id=exchange_id,
-                    api_key=api_key,
-                    secret_key=""  # 如果需要secret_key，从配置读取
-                )
-                
-                if result["success"]:
-                    updated_count += 1
-                    total_affected += result.get("affected_traders", 0)
-                    total_running += result.get("running_traders", 0)
-                    logger.info(f"[APIBalance] Updated {exchange_id}: {result['message']}")
-            
-            if updated_count > 0:
+            if result["success"]:
+                logger.info(f"[APIBalance] NOFX models updated: {result['message']}")
                 return {
                     "success": True,
-                    "message": f"已更新 {updated_count} 个交易所",
-                    "affected_traders": total_affected,
-                    "running_traders": total_running
+                    "message": result.get("message", "模型密钥已更新"),
+                    "affected_traders": result.get("affected_traders", 0),
+                    "running_traders": result.get("running_traders", 0),
+                    "affected_models": result.get("affected_models", 0)
                 }
             else:
+                logger.error(f"[APIBalance] NOFX update failed: {result.get('message')}")
                 return {
                     "success": False,
-                    "message": "未能更新任何交易所"
+                    "message": result.get("message", "更新失败")
                 }
                 
         except Exception as e:
             logger.error(f"[APIBalance] NOFX hot update failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return {
                 "success": False,
                 "message": f"热更新失败: {str(e)}"

@@ -57,11 +57,25 @@ class NofxAPIService:
     def update_exchange_keys(self, exchange_id: str, api_key: str, secret_key: str = "") -> Dict[str, Any]:
         """
         热更新交易所API密钥（不中断交易）
+        注意：此方法保留用于向后兼容，实际调用 update_models_keys
         
         Args:
-            exchange_id: 交易所ID (binance, okx, hyperliquid, aster)
+            exchange_id: 交易所ID (binance, okx, hyperliquid, aster) - 已废弃，保留用于兼容
             api_key: 新的API密钥
-            secret_key: 新的Secret密钥（某些交易所需要）
+            secret_key: 新的Secret密钥（某些交易所需要） - 已废弃，保留用于兼容
+        
+        Returns:
+            dict: 更新结果
+        """
+        # 直接调用新的模型更新接口
+        return self.update_models_keys(api_key)
+    
+    def update_models_keys(self, api_key: str) -> Dict[str, Any]:
+        """
+        热更新模型API密钥（使用 /api/models/update-keys 接口）
+        
+        Args:
+            api_key: 新的API密钥
         
         Returns:
             dict: 更新结果
@@ -75,34 +89,35 @@ class NofxAPIService:
                         "message": "登录失败，无法更新NOFX"
                     }
             
-            url = f"{self.api_url}/exchanges/{exchange_id}/update-keys"
+            url = f"{self.api_url}/models/update-keys"
             headers = {
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json"
             }
             data = {
-                "api_key": api_key,
-                "secret_key": secret_key
+                "api_key": api_key
             }
             
+            logger.info(f"[NofxAPI] Calling /api/models/update-keys with api_key: {api_key[:10]}...")
             response = requests.post(url, json=data, headers=headers, timeout=10)
             
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"[NofxAPI] Keys updated for {exchange_id}: {result.get('message')}")
+                logger.info(f"[NofxAPI] Models keys updated: {result.get('message')}")
                 return {
                     "success": True,
-                    "message": result.get("message", "密钥已更新"),
+                    "message": result.get("message", "模型密钥已更新"),
                     "affected_traders": result.get("affected_traders", 0),
                     "running_traders": result.get("running_traders", 0),
-                    "trader_ids": result.get("trader_ids", [])
+                    "trader_ids": result.get("trader_ids", []),
+                    "affected_models": result.get("affected_models", 0)
                 }
             elif response.status_code == 401:
                 # Token过期，重新登录
                 logger.info("[NofxAPI] Token expired, re-login...")
                 if self.login():
                     # 重试一次
-                    return self.update_exchange_keys(exchange_id, api_key, secret_key)
+                    return self.update_models_keys(api_key)
                 else:
                     return {
                         "success": False,
@@ -118,6 +133,8 @@ class NofxAPIService:
                 
         except Exception as e:
             logger.error(f"[NofxAPI] Update error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return {
                 "success": False,
                 "message": f"更新异常: {str(e)}"

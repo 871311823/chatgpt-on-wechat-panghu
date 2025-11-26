@@ -31,9 +31,10 @@ class TodoListPlugin(Plugin):
         
         text = str(context.content).strip()
         
-        # 检查是否是单个数字（批量完成快捷方式）
-        if text.isdigit() and len(text) == 1:
-            self._handle_batch_complete(e_context, text)
+        # 检查是否是批量完成指令（单个数字或“扣1”等快捷词）
+        digit = self._extract_digit_command(text)
+        if digit is not None:
+            self._handle_batch_complete(e_context, digit)
             return
         
         # 只处理 #todo 开头的消息
@@ -51,6 +52,7 @@ class TodoListPlugin(Plugin):
         arg = parts[2] if len(parts) > 2 else ""
 
         reply = Reply()
+        logger.info(f"[TodoList] Batch complete command '{digit}' from user {user_id}")
         
         # 处理不同命令
         if command.lower() in ("list", "ls", "列表"):
@@ -132,6 +134,32 @@ class TodoListPlugin(Plugin):
         e_context["reply"] = reply
         e_context.action = EventAction.BREAK_PASS
 
+    def _extract_digit_command(self, text: str):
+        """
+        提取批量完成指令中的数字。
+        支持：
+          - "1"
+          - "扣1"
+          - "按1"
+        只要整段文字里仅出现一个数字且无其他数字即可识别。
+        """
+        stripped = text.strip()
+        if not stripped:
+            return None
+        
+        # 完全是单个数字
+        if stripped.isdigit() and len(stripped) == 1:
+            return stripped
+        
+        # 允许前缀包含非数字字符，例如“扣1”“按1”
+        match = re.fullmatch(r"[^\d]*([0-9])[^\d]*", stripped)
+        if match:
+            # 确保只包含一个数字
+            digits = re.findall(r"\d", stripped)
+            if len(digits) == 1:
+                return match.group(1)
+        return None
+
     def _handle_batch_complete(self, e_context: EventContext, digit: str):
         """处理批量完成：回复单个数字完成最近的多个提醒"""
         context = e_context["context"]
@@ -154,21 +182,25 @@ class TodoListPlugin(Plugin):
             with get_session() as s:
                 # 查找符合条件的待办：
                 # 1. 属于当前用户
-                # 2. 状态为pending
-                # 3. 提醒时间在最近5分钟内
+                # 2. 状态为 pending/failed（重复提醒会标记为 failed）
+                # 3. 最近一次提醒时间(last_remind_at)在5分钟窗口内
                 # 4. 还未完成
                 recent_todos = s.execute(
                     select(Todo).where(
                         Todo.user_id == user.id,
-                        Todo.status == "pending",
-                        Todo.remind_at != None,
-                        Todo.remind_at >= time_window_start,
-                        Todo.remind_at <= now
-                    ).order_by(Todo.remind_at)
+                        Todo.status.in_(["pending", "failed"]),
+                        Todo.last_remind_at != None,
+                        Todo.last_remind_at >= time_window_start,
+                        Todo.last_remind_at <= now
+                    ).order_by(Todo.last_remind_at)
                 ).scalars().all()
                 
                 if not recent_todos:
-                    # 没有找到最近的提醒，不处理
+                    reply.type = ReplyType.TEXT
+                    reply.content = "ℹ️ 当前没有需要完成的提醒"
+                    logger.info(f"[TodoList] No recent reminders found for user {user_id}")
+                    e_context["reply"] = reply
+                    e_context.action = EventAction.BREAK_PASS
                     return
                 
                 # 批量完成这些待办
@@ -188,17 +220,25 @@ class TodoListPlugin(Plugin):
                     else:
                         titles_str = "\n".join([f"  • {title}" for title in completed_titles])
                         reply.content = f"✅ 已批量完成 {completed_count} 个待办：\n{titles_str}"
+                    logger.info(f"[TodoList] Batch completed {completed_count} todos for user {user_id}: {completed_titles}")
                     
                     e_context["reply"] = reply
                     e_context.action = EventAction.BREAK_PASS
                 else:
-                    # 没有成功完成任何待办，不处理
+                    reply.type = ReplyType.TEXT
+                    reply.content = "ℹ️ 没有找到可完成的提醒"
+                    logger.info(f"[TodoList] Found reminders but none completed for user {user_id}")
+                    e_context["reply"] = reply
+                    e_context.action = EventAction.BREAK_PASS
                     return
                     
         except Exception as e:
-            logger.error(f"[TodoList] Batch complete error: {e}")
-            # 出错时不处理，让其他插件继续
-            return
+            logger.error(f"[TodoList] Batch complete error for user {user_id}: {e}")
+            reply = Reply()
+            reply.type = ReplyType.ERROR
+            reply.content = "❌ 批量完成提醒失败，请稍后再试"
+            e_context["reply"] = reply
+            e_context.action = EventAction.BREAK_PASS
     
     def get_help_text(self, **kwargs):
         return "📝 待办功能：#todo 内容 /at 时间\n💡 快捷完成：收到提醒后回复数字1即可批量完成"
