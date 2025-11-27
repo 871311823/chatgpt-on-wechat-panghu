@@ -91,7 +91,7 @@ class APIBalanceService:
                     self.data["history"] = self.data["history"][-50:]
                 
                 # 检查是否需要重置低余额通知标志
-                if balance >= 1.0:
+                if balance >= 0.5:
                     self.data["low_balance_notified"] = False
                 
                 self._save_data()
@@ -134,12 +134,12 @@ class APIBalanceService:
         
         balance = result["balance"]
         
-        # 如果余额不足1元且还未通知过
-        if balance < 1.0 and not self.data["low_balance_notified"]:
+        # 如果余额不足0.5元且还未通知过
+        if balance < 0.5 and not self.data["low_balance_notified"]:
             self.data["low_balance_notified"] = True
             self._save_data()
             
-            return f"⚠️ API余额预警\n\n当前余额: ¥{balance:.2f}\n余额不足1元，请及时充值！\n\n查询时间: {result['check_time']}"
+            return f"⚠️ API余额预警\n\n当前余额: ¥{balance:.2f}\n余额不足0.5元，请及时充值！\n\n查询时间: {result['check_time']}"
         
         return None
     
@@ -257,8 +257,8 @@ class APIBalanceService:
         msg += f"查询时间: {check_time}\n"
         
         # 添加状态提示
-        if balance < 1.0:
-            msg += f"\n⚠️ 余额不足1元，请及时充值"
+        if balance < 0.5:
+            msg += f"\n⚠️ 余额不足0.5元，请及时充值"
         elif balance < 5.0:
             msg += f"\n💡 余额较低，建议充值"
         else:
@@ -293,7 +293,7 @@ class APIBalanceService:
         balance = float(self.data["last_balance"])
         
         # 确定状态
-        if balance < 1.0:
+        if balance < 0.5:
             status = "low"
         elif balance < 5.0:
             status = "warning"
